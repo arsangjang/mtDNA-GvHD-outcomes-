@@ -1,0 +1,1150 @@
+---
+title: "mtDNA Variants & GvHD Associations"
+output: html_document
+---
+
+### ===============================
+
+### (1) Setup & load data
+
+### ===============================
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=TRUE, results='hide', warning=FALSE}
+rm(list = ls())
+
+## Load libraries
+library(tidyverse)
+library(seqMeta)
+library(CompQuadForm)
+library(twostageGWASsurvival)
+library(MASS)
+library(writexl)
+library(readxl)
+library(Matrix)
+library(rmarkdown)
+library(knitr)
+library(data.table)
+library(gtsummary)
+library(dplyr)
+
+# Set directory
+setwd("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply")
+
+```
+
+#### 1-a) Prepare data for main analysis (*only one time*)
+
+```{r eval=TRUE, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Run this if you don't have the GvHD variables based on 100 days cutoff
+"pheno_file = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_May13th_2025.xlsx')
+
+
+
+Donorgroup >=6 gets mapped to 6. All other categories stay the same.
+
+So basically, we’re collapsing the following three categories:
+
+Mis-matched unrelated (<=6/8)
+Multi-donor
+Unrelated (matching unknown)
+
+After you collapse there are only 5 observations in the donorgp=6 category. See how your Cox models hold up. If there are problems with convergence, you might consider just deleting those 5 observations (so you’d have n=489). 
+
+
+
+
+
+##### Collapse GVHD prophylaxis variable based on Paul’s suggestion
+'GVHD prophylaxis // 5/6 = (Post-cy alone, Post-cy + others) coded as 3(n=66)
+0/20/99 = (No GVHD prophylaxis, Other, Missing)and 2/3/4  = (T-cell depletion + Others, CD34 selection along, CD34 selection + others))
+5/6 = (Post-cy alone, Post-cy + others)
+7/8/9/10 = (Tac + MMF + others, Tac + MTX + others, Tac + others, Tac alone)
+11/12/13 = (CSA + MMF + others, CSA + MTX + others, CSA + others)'
+
+pheno_file$gvhprhrx_R1 <- with(pheno_file,
+                               ifelse(gvhprhrx %in% c(0, 20, 99,2,3,4), 1,
+                                             ifelse(gvhprhrx %in% c(5, 6), 2,
+                                                    ifelse(gvhprhrx %in% c(7, 8, 9, 10), 3,
+                                                           ifelse(gvhprhrx %in% c(11, 12, 13), 4, 0)))))
+
+table(pheno_file$gvhprhrx_R1)
+
+# 
+pheno_file$gvhprhrx_R1 <- with(pheno_file,
+                               ifelse(gvhprhrx %in% c(0, 20, 99,2,3,4), 1,
+                                             ifelse(gvhprhrx %in% c(5, 6), 2,
+                                                    ifelse(gvhprhrx %in% c(7, 8, 9, 10), 3,
+                                                           ifelse(gvhprhrx %in% c(11, 12, 13), 4, 0)))))
+
+
+# convert month unit to day
+pheno_file$day_aGvHD24<-pheno_file$intxagvhd24*30
+pheno_file$day_aGvHD34<-pheno_file$intxagvhd34*30
+
+# Create 100 aGvHD
+pheno_file <- pheno_file %>%
+  mutate(
+    event_aGvhD24 = ifelse(day_aGvHD24 > 100 & agvhd24 == 1, 0, agvhd24)
+  )
+pheno_file <- pheno_file %>%
+  mutate(
+    event_aGvhD34 = ifelse(day_aGvHD34 > 100 & agvhd34 == 1, 0, agvhd34)
+  )
+
+# Any GvHD
+pheno_file <- pheno_file %>%
+  mutate(
+    gvhd = ifelse(
+      event_aGvhD24 == 1 | event_aGvhD34 == 1 | cgvhd == 1,
+      1, 0
+    )
+  )
+"
+
+# 
+"pheno_file <- pheno_file %>%
+  mutate(
+    gvhd = ifelse(
+      event_aGvhD24 == 1 | event_aGvhD34 == 1 | cgvhd == 1,
+      1, 0
+    )
+  )
+
+
+pheno_file <- pheno_file %>%
+  mutate(
+    time_aGvHD24_use = ifelse(event_aGvhD24 == 1, intxagvhd24, NA),
+    time_aGvHD34_use = ifelse(event_aGvhD34 == 1, intxagvhd34, NA),
+    time_cGvHD_use   = ifelse(cgvhd == 1, intxcgvhd, NA),
+
+    time_gvhd = pmin(time_aGvHD24_use, time_aGvHD34_use, time_cGvHD_use, na.rm = TRUE)
+  )"
+
+
+# Merge 1 =  ATG alone(n=145) or Campath alone (n=6) // 2= Neither (n=343)
+'pheno_file$atgcampathgp_r <- with(pheno_file,
+                               ifelse(atgcampathgp %in% c(2, 3), 1,
+                                             ifelse(atgcampathgp == 4, 2, NA)))'
+
+
+## Keep main prophylaxis variable with new name 'prophx_r'
+'pheno_fileV$prophx_r<-(pheno_fileV$prophx)'
+
+# Collapse the prophx variable in validation dataset:Tac+/-others =0, 'CSA+/-others & others' = 1, 
+'pheno_fileV$prophx<-ifelse(pheno_fileV$prophx==3,0,ifelse(pheno_fileV$prophx==4,1,1))'
+
+# Merge the In vivo T-cell depletion categories validation data
+'pheno_fileV$atgcampathgp_r <- with(pheno_fileV,
+                               ifelse(atgcampathgp2 %in% c(2, 3), 1,
+                                             ifelse(atgcampathgp2 == 4, 2, NA)))'
+
+
+#Save data// we dont need run again as already created required data
+'write_xlsx(pheno_file, "C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx")'
+
+
+'write_xlsx(pheno_fileV, "C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS295_clinical_R4.xlsx")'
+
+
+'library(car)
+library(performance)
+
+vif_model <- lm(intxcgvhd ~ age+ donorage+
+                                       prophx 
+                                     + donorgp 
+                                     +atgcampathgp_r 
+                                     + pc1+ pc2+pc3+ pc4+pc5+ pc6+pc7+ pc8+pc9+ pc10, data =  pheno_fileV)
+check_collinearity(vif_model)
+
+vif(vif_model)'
+
+```
+
+#### Important points:
+
+```         
+1) The Seq Meta package is only available for R V4.0.2
+2) You must define a values for repeated SNP position unless you will get same results for them, R will consider just one of them in dataset
+3)  You must exclude SNPs with zero variation, additionally, SNPs with NA p-values obtained from singleSNPMeta results from both genomatrix and SNPinfo files, unless you will get error for SKAT-O and Burden test
+4) Rename the patients ID in both files (pheno & genomatrix) with adding R to begining and replacing '.' with '_'
+
+5) Define the PCs as numeric before ruining the analysis
+6) All GVHD should be adjusted for age, dnrage, gvhprhrx_R1, donorgp, PC1, and PC2
+7) You sould define snpInfo as data frame: snpInfo <- as.data.frame(snpInfo)
+```
+
+#### Input files:
+
+```         
+1) genomatrix: A matrix of mtDNA variants for each sample, where rows represent samples and columns represent variants. The values in the matrix indicate the presence or absence of specific variants in each sample. *Our File name: all494_2666_binary.vcf.txt*
+
+2) SNPInfo: A data frame containing information about the mtDNA variants, including their names, positions, and other relevant annotations. This file is used to provide context for the variants being analyzed in the SKAT-O test. *Our File name: SNP_POS_ALT_Func_2666_494_R2.xlsx*
+
+3) Pheno_file: Clinical/Demographic information of samples. *Our Final File name: MDS_imputed_Clinical_MDS&donor_March9th_2026.xlsx*
+```
+
+##### 1-b) Import the data
+
+```{r load-data, eval=TRUE, message=FALSE, include=TRUE, paged.print=TRUE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Recipient data
+pheno_file = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx')
+genomatrix = read.table("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/all494_2666_binary.vcf.txt",header=TRUE)
+snpInfo = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/SNP_POS_ALT_Func_2666_494_R2.xlsx')
+
+
+pheno_file$event_aGvhD24<-as.numeric(pheno_file$event_aGvhD24)
+pheno_file$event_aGvhD34<-as.numeric(pheno_file$event_aGvhD34)
+pheno_file$intxagvhd24<-as.numeric(pheno_file$intxagvhd24)
+pheno_file$intxagvhd34<-as.numeric(pheno_file$intxagvhd34)
+pheno_file$intxcgvhd<-as.numeric(pheno_file$intxcgvhd)
+pheno_file$cgvhd<-as.numeric(pheno_file$cgvhd)
+
+pheno_file$PC1<-as.numeric(pheno_file$PC1)
+pheno_file$PC2<-as.numeric(pheno_file$PC2)
+pheno_file$dnrage<-as.numeric(pheno_file$dnrage)
+pheno_file$age<-as.numeric(pheno_file$age)
+
+pheno_file$gvhprhrx_R1<-factor(pheno_file$gvhprhrx_R1)
+pheno_file$donorgp<-factor(pheno_file$donorgp)
+
+
+# Donor data
+pheno_fileD = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx')
+genomatrixD = read.table("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/all494_1825_binary.vcf.txt",header=TRUE)
+snpInfoD = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/SNP_POS_ALT_Func_1825_494_R2.xlsx')
+
+pheno_fileD$event_aGvhD24<-as.numeric(pheno_fileD$event_aGvhD24)
+pheno_fileD$event_aGvhD34<-as.numeric(pheno_fileD$event_aGvhD34)
+pheno_fileD$intxagvhd24<-as.numeric(pheno_fileD$intxagvhd24)
+pheno_fileD$intxagvhd34<-as.numeric(pheno_fileD$intxagvhd34)
+pheno_fileD$intxcgvhd<-as.numeric(pheno_fileD$intxcgvhd)
+pheno_fileD$cgvhd<-as.numeric(pheno_fileD$cgvhd)
+
+pheno_fileD$pcD1<-as.numeric(pheno_fileD$pcD1)
+pheno_fileD$pcD2<-as.numeric(pheno_fileD$pcD2)
+pheno_fileD$dnrage<-as.numeric(pheno_fileD$dnrage)
+pheno_fileD$age<-as.numeric(pheno_fileD$age)
+
+
+pheno_fileD$gvhprhrx_R1<-factor(pheno_fileD$gvhprhrx_R1)
+pheno_fileD$donorgp<-factor(pheno_fileD$donorgp)
+
+
+
+
+# Read validation dataset- NCI
+genomatrixV = read.table("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS295_2942_binary.txt",header=TRUE)
+snpInfoV = read.csv('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/SNV_info_excluded_non-coding.csv',header=TRUE)
+pheno_fileV = read_excel("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS295_clinical_R4.xlsx")
+
+pheno_fileV$event_aGvhD24[pheno_fileV$event_aGvhD24==98] <- NA
+pheno_fileV$event_aGvhD34[pheno_fileV$event_aGvhD34==98] <- NA
+pheno_fileV$cgvhd[pheno_fileV$cgvhd== 99] <- NA
+
+
+pheno_fileV$event_aGvhD24<-as.numeric(pheno_fileV$event_aGvhD24)
+pheno_fileV$event_aGvhD34<-as.numeric(pheno_fileV$event_aGvhD34)
+pheno_fileV$intxagvhd24<-as.numeric(pheno_fileV$intxagvhd24)
+pheno_fileV$intxagvhd34<-as.numeric(pheno_fileV$intxagvhd34)
+pheno_fileV$intxcgvhd<-as.numeric(pheno_fileV$intxcgvhd)
+pheno_fileV$cgvhd<-as.numeric(pheno_fileV$cgvhd)
+
+
+pheno_fileV$pc1<-as.numeric(pheno_fileV$pc1)
+pheno_fileV$pc2<-as.numeric(pheno_fileV$pc2)
+pheno_fileV$donorage<-as.numeric(pheno_fileV$donorage)
+pheno_fileV$age<-as.numeric(pheno_fileV$age)
+
+pheno_fileV$donorgp<-factor(pheno_fileV$donorgp)
+pheno_fileV$prophx<-factor (pheno_fileV$prophx)
+
+
+# There is no Remove rows where prophx and cgvhd is NA
+
+```
+
+##### 1-c) Create genomatrix for cox model to merge snpInfo and genomatrix info- recipients
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=TRUE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+
+#//////////#
+I = match(snpInfo$POS, genomatrix$POS)
+
+genomatrix = genomatrix[I,]
+
+genomatrix = t(genomatrix[,-c(1:3)])
+
+colnames(genomatrix) = snpInfo$SNP
+
+
+samples = row.names(genomatrix)
+I = match(as.character(pheno_file$formattedRID_LabCorpID),samples)
+genomatrix = genomatrix[I,]
+
+rownames(genomatrix) <- pheno_file$formattedRID_LabCorpID
+
+
+# You can Save genomatrix as csv file
+# write.csv(as.data.frame(genomatrix), "genomatrix.csv", row.names=TRUE)
+
+
+# Check the exact name in dataset (snpInfo) maybe it is Gene18
+aggregate_by = 'gene18'
+
+
+# Define snpInfo as data frame, I got error due to this took long time to figure out 
+snpInfo <- as.data.frame(snpInfo)
+
+
+#//////////////////////////////////////////////////////////////////////////////#
+#//////////////////////////////////////////////////////////////////////////////#
+# 2) Define repeated position in genomatrix and SNPinfo files in donors
+
+#//////////#
+ID = match(snpInfoD$POS, genomatrixD$POS)
+
+genomatrixD = genomatrixD[ID,]
+
+genomatrixD = t(genomatrixD[,-c(1:3)])
+
+colnames(genomatrixD) = snpInfoD$SNP
+
+
+samplesD = row.names(genomatrixD)
+ID = match(as.character(pheno_fileD$Donor_formattedRID_LabCorpID),samplesD)
+genomatrixD = genomatrixD[ID,]
+
+rownames(genomatrixD) <- pheno_fileD$Donor_formattedRID_LabCorpID
+
+
+# Check the exact name in dataset maybe it is Gene18
+aggregate_byD = 'Gene18'
+
+
+# Define snpInfo as data frame
+snpInfoD <- as.data.frame(snpInfoD)
+
+
+
+#//////////////////////////////////////////////////////////////////////////////#
+#//////////////////////////////////////////////////////////////////////////////#
+# 3) Define repeated position in genomatrixV and SNPinfo files in validation
+IV = match(snpInfoV$POS, genomatrixV$POS)
+
+genomatrixV = genomatrixV[IV,]
+
+genomatrixV = t(genomatrixV[,-c(1:3)])
+
+colnames(genomatrixV) = snpInfoV$SNP
+
+
+samplesV = row.names(genomatrixV)
+IV = match(as.character(pheno_fileV$subject_id),samplesV)
+genomatrixV = genomatrixV[IV,]
+
+rownames(genomatrixV) <- pheno_fileV$subject_id
+
+
+
+aggregate_byV = 'Gene18b'
+
+```
+
+## Recipients mtDNA & GvHD  (2-4)
+
+### ===============================
+
+### (2) Associations between mtDNA & aGvHD24 - Recipients
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and acute GVHD24 in MDS patients (Recipients)
+
+##### 2-a) Run the cause-specific Cox SKAT-O model for aGvHD24 in recipients to find variants with NA P-values
+
+```         
+Before running the SKAT-O analysis, first check for any NA p‑values in the single‑SNV analysis. Based on those results, we need to remove variants with zero variation or NA p‑values; otherwise, SKAT‑O and the burden test will return errors
+```
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_aGVHD24_MDS<-prepCox(genomatrix, Surv(intxagvhd24,event_aGvhD24) ~ age+ dnrage+  gvhprhrx_R1+ donorgp  + PC1+PC2,SNPInfo = snpInfo, aggregateBy = aggregate_by, data = pheno_file ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_aGVHD24_MDS<-singlesnpMeta(Cox_model_aGVHD24_MDS, SNPInfo = snpInfo, aggregateBy = aggregate_by)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_aGVHD24_MDS_NA <- singleSNPMeta_aGVHD24_MDS %>%
+  filter(is.na(p))
+
+singleSNPMeta_aGVHD24_MDS_NA <- singleSNPMeta_aGVHD24_MDS[is.na(singleSNPMeta_aGVHD24_MDS$p), ]
+
+print(singleSNPMeta_aGVHD24_MDS_NA)
+
+# Save SNV results
+write.table(singleSNPMeta_aGVHD24_MDS, file = "Results_singleSNPMeta_aGvHD24_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+##### 2-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again
+```
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+
+# 1. Filter SNPs
+
+
+# 2. Run Cox model
+Fit_Cox_model_aGVHD24_MDS <- prepCox(genomatrix,Surv(intxagvhd24, event_aGvhD24) ~ age + dnrage + gvhprhrx_R1 +donorgp+ PC1 + PC2,SNPInfo = snpInfo, aggregateBy = aggregate_by,  data = pheno_file,verbose = TRUE)
+
+# 3. Run Cox  Skat-o model
+Fit_Cox_skato_model_aGVHD24_MDS <- skatOMeta(Fit_Cox_model_aGVHD24_MDS, 
+                                         SNPInfo = snpInfo, 
+                                         aggregateBy = aggregate_by, 
+                                         verbose = TRUE)
+# 4. Run Burden test
+Fit_burden_Cox_aGVHD24_MDS <- burdenMeta(Fit_Cox_model_aGVHD24_MDS, 
+                                         SNPInfo = snpInfo, 
+                                         aggregateBy = aggregate_by)
+
+# 4. Save outputs 
+write.table(Fit_Cox_skato_model_aGVHD24_MDS, file = "Results_Cox_skato_aGVHD24_MDS_March2026b.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_aGVHD24_MDS, file = "Results_Cox_burden_aGVHD24_MDS_March2026b.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_aGVHD24_MDS, "Results_aGVHD24_skato_MDSb.rds")
+saveRDS(Fit_burden_Cox_aGVHD24_MDS, "Results_aGVHD24_burden_MDSb.rds")
+```
+
+#### 2-c) Results of SKAT-O - aGvHD24 in recipients
+
+```{r}
+
+print(Fit_Cox_skato_model_aGVHD24_MDS)
+```
+
+#### 2-d) Results of Burden test - aGvHD24 in recipients
+
+```{r}
+print(Fit_burden_Cox_aGVHD24_MDS)
+```
+
+### ===============================
+
+### (3) Associations between mtDNA & aGvHD34 - Recipients
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and acute GVHD34 in recipients
+
+##### 3-a) Run the cause-specific Cox SKAT-O model for aGvHD34 in recipients to check anye NA p‑values in the single‑SNV analysis
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_aGVHD34_MDS<-prepCox(genomatrix, Surv(intxagvhd34,event_aGvhD34) ~ age+ dnrage+  gvhprhrx_R1+ donorgp + PC1+PC2,SNPInfo = snpInfo, aggregateBy = aggregate_by, data = pheno_file ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_aGVHD34_MDS<-singlesnpMeta(Cox_model_aGVHD34_MDS, SNPInfo = snpInfo, aggregateBy = aggregate_by)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_aGVHD34_MDS_NA <- singleSNPMeta_aGVHD34_MDS %>%
+  filter(is.na(p))
+
+singleSNPMeta_aGVHD34_MDS_NA <- singleSNPMeta_aGVHD34_MDS[is.na(singleSNPMeta_aGVHD34_MDS$p), ]
+
+print(singleSNPMeta_aGVHD34_MDS_NA)
+
+# Save SNV results
+write.table(singleSNPMeta_aGVHD34_MDS, file = "Results_singleSNPMeta_aGvHD34_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again if there is any
+The p-values with NA = 0 
+```
+
+##### 3-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+
+# 1. Run Cox model
+Fit_Cox_model_aGVHD34_MDS <- prepCox(genomatrix,Surv(intxagvhd34, event_aGvhD34) ~ age+ dnrage+  gvhprhrx_R1+ donorgp+ PC1+PC2,SNPInfo = snpInfo,aggregateBy = aggregate_by, data = pheno_file,verbose = TRUE)
+str(pheno_file)
+# 2. Run Cox  Skat-o model
+Fit_Cox_skato_model_aGVHD34_MDS <- skatOMeta(Fit_Cox_model_aGVHD34_MDS, 
+                                         SNPInfo = snpInfo, 
+                                         aggregateBy = aggregate_by, 
+                                         verbose = TRUE)
+# 3. Run Burden test 
+Fit_burden_Cox_aGVHD34_MDS <- burdenMeta(Fit_Cox_model_aGVHD34_MDS, 
+                                         SNPInfo = snpInfo, 
+                                         aggregateBy = aggregate_by)
+
+# 4. Save outputs
+write.table(Fit_Cox_skato_model_aGVHD34_MDS, file = "Results_Cox_skato_aGVHD34_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_aGVHD34_MDS, file = "Results_Cox_burden_aGVHD34_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_aGVHD34_MDS, "results_agvhd34_skato_MDS.rds")
+saveRDS(Fit_burden_Cox_aGVHD34_MDS, "results_agvhd34_burden_MDS.rds")
+```
+
+#### 3-c) Results of SKAT-O - aGvHD34 in recipients
+
+```{r}
+print(Fit_Cox_skato_model_aGVHD34_MDS)
+```
+
+#### 3-d) Results of Burden test - aGvHD34 in recipients
+
+```{r}
+print(Fit_burden_Cox_aGVHD34_MDS)
+```
+
+### ===============================
+
+### (4) Associations between mtDNA & cGvHD - Recipients
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and chronic GVHD in recipients
+
+##### 4-a) Run the cause-specific Cox SKAT-O model for cGvHD in recipients to check anye NA p‑values in the single‑SNV analysis
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_cGvHD_MDS<-prepCox(genomatrix, Surv(intxcgvhd,cgvhd) ~ age+ dnrage+  gvhprhrx_R1+ donorgp  + PC1+PC2,SNPInfo = snpInfo, aggregateBy = aggregate_by, data = pheno_file ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_cGvHD_MDS<-singlesnpMeta(Cox_model_cGvHD_MDS, SNPInfo = snpInfo, aggregateBy = aggregate_by)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_cGvHD_MDS_NA <- singleSNPMeta_cGvHD_MDS %>%
+  filter(is.na(p))
+
+singleSNPMeta_cGvHD_MDS_NA <- singleSNPMeta_cGvHD_MDS[is.na(singleSNPMeta_cGvHD_MDS$p), ]
+
+print(singleSNPMeta_cGvHD_MDS_NA)
+
+# Save SNV results
+write.table(singleSNPMeta_cGvHD_MDS, file = "Results_singleSNPMeta_cGvHD_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again if there is any
+The p-values with NA = 0 
+```
+
+##### 4-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+
+# 1. Filter SNPs: We didn't observed any NA for P-valuse in single variant analysis
+
+SNP_to_removec <- c('snp64',
+'snp237',
+'snp280',
+'snp420',
+'snp434',
+'snp546',
+'snp718',
+'snp865',
+'snp913',
+'snp1261',
+'snp1302',
+'snp1740',
+'snp1958',
+'snp2160')
+snpInfo_cGvHD <- snpInfo %>% filter(!Name %in% SNP_to_removec)
+
+# 2. Run Cox model
+Fit_Cox_model_cGvHD_MDS <- prepCox(genomatrix,Surv(intxcgvhd,cgvhd) ~ age+ dnrage+  gvhprhrx_R1+ donorgp  + PC1+PC2,SNPInfo = snpInfo_cGvHD,aggregateBy = aggregate_by, data = pheno_file, verbose = TRUE)
+
+# is any NA for intxcgvhd
+pheno_file$intxcgvhd[is.na(pheno_file$intxcgvhd)]
+
+
+# 3. Run Cox  Skat-o model
+Fit_Cox_skato_model_cGvHD_MDS <- skatOMeta(Fit_Cox_model_cGvHD_MDS, 
+                                         SNPInfo = snpInfo_cGvHD, 
+                                         aggregateBy = aggregate_by, 
+                                         verbose = TRUE)
+# 4. Run Burden test 
+Fit_burden_Cox_cGvHD_MDS <- burdenMeta(Fit_Cox_model_cGvHD_MDS, 
+                                         SNPInfo = snpInfo_cGvHD, 
+                                         aggregateBy = aggregate_by)
+
+# 5. Save outputs
+write.table(Fit_Cox_skato_model_cGvHD_MDS, file = "Results_Cox_skato_cGvHD_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_cGvHD_MDS, file = "Results_Cox_burden_cGvHD_MDS_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_cGvHD_MDS, "results_cGvHD_skato_MDS.rds")
+saveRDS(Fit_burden_Cox_cGvHD_MDS, "results_cGvHD_burden_MDS.rds")
+```
+
+#### 4-c) Results of SKAT-O - cGvHD in recipients
+
+```{r}
+print(Fit_Cox_skato_model_cGvHD_MDS)
+```
+
+#### 4-d) Results of Burden test - cGvHD in recipients
+
+```{r}
+print(Fit_burden_Cox_cGvHD_MDS)
+```
+
+## Donor mtDNA & GvHD (5-7)
+
+### ===============================
+
+### (5) Associations between mtDNA & aGvHD24 - donors
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and acute GVHD24 in donors
+
+##### 5-a) Run the cause-specific Cox SKAT-O model for aGvHD24 in donors to find variants with NA P-values
+
+```         
+Before running the SKAT-O analysis, first check for any NA p‑values in the single‑SNV analysis. Based on those results, we need to remove variants with zero variation or NA p‑values; otherwise, SKAT‑O and the burden test will return errors
+```
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_aGVHD24_Donor<-prepCox(genomatrixD, Surv(intxagvhd24,event_aGvhD24) ~ age+ dnrage+  gvhprhrx_R1+ donorgp +pcD1+pcD2,SNPInfo = snpInfoD, aggregateBy = aggregate_byD, data = pheno_fileD ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_aGVHD24_Donor<-singlesnpMeta(Cox_model_aGVHD24_Donor, SNPInfo = snpInfoD, aggregateBy = aggregate_byD)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_aGVHD24_Donor_NA <- singleSNPMeta_aGVHD24_Donor %>%
+  filter(is.na(p))
+
+singleSNPMeta_aGVHD24_Donor_NA <- singleSNPMeta_aGVHD24_Donor[is.na(singleSNPMeta_aGVHD24_Donor$p), ]
+
+print(singleSNPMeta_aGVHD24_Donor_NA)
+
+# Save SNV results
+write.table(singleSNPMeta_aGVHD24_Donor, file = "singleSNPMeta_aGvHD24_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+##### 5-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again
+```
+
+```{r  eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+
+# 1. Filter aGVHD24 Donor SNPs
+
+# 2. Run Cox model aGVHD24 Donor
+Fit_Cox_model_aGVHD24_Donor <- prepCox(genomatrixD,Surv(intxagvhd24, event_aGvhD24) ~ age + dnrage + gvhprhrx_R1 +donorgp+pcD1+pcD2, SNPInfo = snpInfoD,aggregateBy = aggregate_byD, 
+                                     data = pheno_fileD, 
+                                     verbose = TRUE)
+
+# 3. Run Cox  Skat-o model aGVHD24 Donor
+Fit_Cox_skato_model_aGVHD24_Donor <- skatOMeta(Fit_Cox_model_aGVHD24_Donor, 
+                                         SNPInfo = snpInfoD, 
+                                         aggregateBy = aggregate_byD, 
+                                         verbose = TRUE)
+
+# 4. Run Burden test aGVHD24 Donor
+Fit_burden_Cox_aGVHD24_Donor <- burdenMeta(Fit_Cox_model_aGVHD24_Donor, 
+                                         SNPInfo =  snpInfoD, 
+                                         aggregateBy = aggregate_byD)
+
+# 4. Save outputs 
+write.table(Fit_Cox_skato_model_aGVHD24_Donor, file = "Results_Cox_skato_aGVHD24_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_aGVHD24_Donor, file = "Results_Cox_burden_aGVHD24_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_aGVHD24_Donor, "results_aGVHD24_skato_Donor.rds")
+saveRDS(Fit_burden_Cox_aGVHD24_Donor, "results_aGVHD24_burden_Donor.rds")
+```
+
+#### 5-c) Results of SKAT-O - aGvHD24 in donors
+
+```{r}
+
+print(Fit_Cox_skato_model_aGVHD24_Donor)
+```
+
+#### 5-d) Results of Burden test - aGvHD24 in donors
+
+```{r}
+print(Fit_burden_Cox_aGVHD24_Donor)
+```
+
+### ===============================
+
+### (6) Associations between mtDNA & aGvHD34 - donors
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and acute GVHD34 in donors
+
+##### 6-a) Run the cause-specific Cox SKAT-O model for aGvHD34 in donors to check anye NA p‑values in the single‑SNV analysis
+
+```{r donor-agvhd34-cox, eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_aGVHD34_Donor<-prepCox(genomatrixD, Surv(intxagvhd34,event_aGvhD34) ~ age+ dnrage+  gvhprhrx_R1+ donorgp + pcD1+pcD2,SNPInfo = snpInfoD, aggregateBy = aggregate_byD, data = pheno_fileD ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_aGVHD34_Donor<-singlesnpMeta(Cox_model_aGVHD34_Donor, SNPInfo = snpInfoD, aggregateBy = aggregate_byD)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_aGVHD34_Donor_NA <- singleSNPMeta_aGVHD34_Donor %>%
+  filter(is.na(p))
+
+singleSNPMeta_aGVHD34_Donor_NA <- singleSNPMeta_aGVHD34_Donor[is.na(singleSNPMeta_aGVHD34_Donor$p), ]
+
+print(singleSNPMeta_aGVHD34_Donor_NA)
+
+# Save SNV results
+write.table(singleSNPMeta_aGVHD34_Donor, file = "Results_singleSNPMeta_aGvHD34_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again if there is any
+The p-values with NA = 0: same as  aGvHD24 "snp302"
+```
+
+##### 6-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# 1. Filter SNPs: exclude NA for P-valuse in single variant analysis
+SNP_to_removeD <- c("snp302")
+snpInfoD_aGvHD34 <- snpInfoD %>% filter(!Name %in% SNP_to_removeD)
+
+
+
+
+# 2. Run Cox model
+Fit_Cox_model_aGVHD34_Donor <- prepCox(genomatrixD,Surv(intxagvhd34, event_aGvhD34) ~ age+ dnrage+ gvhprhrx_R1+ donorgp  + pcD1+pcD2,SNPInfo = snpInfoD_aGvHD34, 
+                                     aggregateBy = aggregate_byD, 
+                                     data = pheno_fileD, 
+                                     verbose = TRUE)
+
+
+# 3. Run Cox  Skat-o model
+Fit_Cox_skato_model_aGVHD34_Donor <- skatOMeta(Fit_Cox_model_aGVHD34_Donor, 
+                                         SNPInfo = snpInfoD_aGvHD34, 
+                                         aggregateBy = aggregate_byD, 
+                                         verbose = TRUE)
+# 4. Run Burden test 
+Fit_burden_Cox_aGVHD34_Donor <- burdenMeta(Fit_Cox_model_aGVHD34_Donor, 
+                                         SNPInfo = snpInfoD_aGvHD34, 
+                                         aggregateBy = aggregate_byD)
+
+# 5. Save outputs
+write.table(Fit_Cox_skato_model_aGVHD34_Donor, file = "Results_Cox_skato_aGVHD34_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_aGVHD34_Donor, file = "Results_Cox_burden_aGVHD34_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_aGVHD34_Donor, "results_aGVHD34_skato_Donor.rds")
+saveRDS(Fit_burden_Cox_aGVHD34_Donor, "results_aGVHD34_burden_Donor.rds")
+```
+
+#### 6-c) Results of SKAT-O - aGvHD34 in donors
+
+```{r}
+print(Fit_Cox_skato_model_aGVHD34_Donor)
+```
+
+#### 6-d) Results of Burden test - aGvHD34 in donors
+
+```{r}
+print(Fit_burden_Cox_aGVHD34_Donor)
+```
+
+### ===============================
+
+### (7) Associations between mtDNA & cGvHD - donors
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and chronic GVHD in donors
+
+##### 7-a) Run the cause-specific Cox SKAT-O model for cGvHD in donors to check anye NA p‑values in the single‑SNV analysis
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+
+# Main cox model
+Cox_model_cGvHD_Donor<-prepCox(genomatrixD, Surv(intxcgvhd,cgvhd) ~ age+ dnrage+  gvhprhrx_R1+ donorgp  + pcD1+pcD2,SNPInfo = snpInfoD, aggregateBy = aggregate_byD, data = pheno_fileD ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_cGvHD_Donor<-singlesnpMeta(Cox_model_cGvHD_Donor, SNPInfo = snpInfoD, aggregateBy = aggregate_byD)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_cGvHD_Donor_NA <- singleSNPMeta_cGvHD_Donor %>%
+  filter(is.na(p))
+
+singleSNPMeta_cGvHD_Donor_NA <- singleSNPMeta_cGvHD_Donor[is.na(singleSNPMeta_cGvHD_Donor$p), ]
+
+print(singleSNPMeta_cGvHD_Donor_NA)
+
+# Save SNV results
+write.table(singleSNPMeta_cGvHD_Donor, file = "Results_singleSNPMeta_cGvHD_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+##### 7-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+
+# 1. Filter SNPs: observed  NA for P-valuse in single variant analysis
+SNP_to_removeDc <- c('snp601',	'snp675',	'snp690',	'snp706',	'snp708',	'snp716',	'snp799',	'snp944',	'snp38',	'snp94',	'snp1734',	'snp1488',	'snp1507',	'snp1582',	'snp493',	'snp519',	'snp542',	'snp1014',	'snp1135',	'snp1060',	'snp1265',	'snp1418',	'snp1444',	'snp245',	'snp290',	'snp302',	'snp184',	'snp1204',	'snp1624'
+)
+snpInfoD_cGvHD <- snpInfoD %>% filter(!Name %in% SNP_to_removeDc)
+
+# 2. Run Cox model
+Fit_Cox_model_cGvHD_Donor <- prepCox(genomatrixD, 
+                                     Surv(intxcgvhd,cgvhd) ~ age+ dnrage+  gvhprhrx_R1+ donorgp + pcD1+pcD2,
+                                     SNPInfo =  snpInfoD_cGvHD, 
+                                     aggregateBy = aggregate_byD, 
+                                     data = pheno_fileD, 
+                                     verbose = TRUE)
+# 3. Run Cox  Skat-o model
+Fit_Cox_skato_model_cGvHD_Donor <- skatOMeta(Fit_Cox_model_cGvHD_Donor, 
+                                         SNPInfo = snpInfoD_cGvHD, 
+                                         aggregateBy = aggregate_byD, 
+                                         verbose = TRUE)
+# 4. Run Burden test 
+Fit_burden_Cox_cGvHD_Donor <- burdenMeta(Fit_Cox_model_cGvHD_Donor, 
+                                         SNPInfo = snpInfoD_cGvHD, 
+                                         aggregateBy = aggregate_byD)
+
+# 5. Save outputs
+write.table(Fit_Cox_skato_model_cGvHD_Donor, file = "Results_Cox_skato_cGvHD_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_cGvHD_Donor, file = "Results_Cox_burden_cGvHD_Donor_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_cGvHD_Donor, "results_cGVHD_skato_Donor.rds")
+saveRDS(Fit_burden_Cox_cGvHD_Donor, "results_cGVHD_burden_Donor.rds")
+```
+
+#### 7-c) Results of SKAT-O - cGvHD in donors
+
+```{r}
+print(Fit_Cox_skato_model_cGvHD_Donor)
+```
+
+#### 7-d) Results of Burden test - cGvHD in donors
+
+```{r}
+print(Fit_burden_Cox_cGvHD_Donor)
+```
+
+## Validation-recipients mtDNA & GvHD (8-10)
+
+### ===============================
+
+### (8) Associations between mtDNA & aGvHD24 - Recipients validation
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and acute GVHD24 in MDS patients (validation)
+
+##### 8-a) Run the cause-specific Cox SKAT-O model for aGvHD24 in recipients to find variants with NA P-values
+
+```         
+Before running the SKAT-O analysis, first check for any NA p‑values in the single‑SNV analysis. Based on those results, we need to remove variants with zero variation or NA p‑values; otherwise, SKAT‑O and the burden test will return errors
+```
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_aGVHD24_MDS_validation<-prepCox(genomatrixV, Surv(day_aGvHD24,event_aGvhD24) ~ age+ donorage+  prophx+ donorgp + pc1+ pc2,SNPInfo = snpInfoV, snpNames="SNP",aggregateBy = aggregate_byV, data = pheno_fileV ,verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_aGVHD24_MDS_validation<-singlesnpMeta(Cox_model_aGVHD24_MDS_validation,snpNames="SNP", SNPInfo = snpInfoV, aggregateBy = aggregate_byV)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_aGVHD24_MDS_NA_validation <- singleSNPMeta_aGVHD24_MDS_validation %>%
+  filter(is.na(p))
+
+singleSNPMeta_aGVHD24_MDS_NA_validation <- singleSNPMeta_aGVHD24_MDS_validation[is.na(singleSNPMeta_aGVHD24_MDS_validation$p), ]
+
+print(singleSNPMeta_aGVHD24_MDS_NA_validation)
+
+# Save SNV results
+write.table(singleSNPMeta_aGVHD24_MDS_validation, file = "Results_singleSNPMeta_aGvHD24_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+##### 8-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again
+```
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+
+# 1. Run Cox model
+Fit_Cox_model_aGVHD24_MDS_validation <- prepCox(genomatrixV,Surv(day_aGvHD24, event_aGvhD24) ~ age+ donorage+  prophx+ donorgp + pc1+ pc2,SNPInfo = snpInfoV, snpNames="SNP", aggregateBy = aggregate_byV, data = pheno_fileV,verbose = TRUE)
+
+# 3. Run Cox  Skat-o model
+Fit_Cox_skato_model_aGVHD24_MDS_validation <- skatOMeta(Fit_Cox_model_aGVHD24_MDS_validation, 
+                                         SNPInfo = snpInfoV, 
+                                         aggregateBy = aggregate_byV, snpNames="SNP",
+                                         verbose = TRUE)
+# 4. Run Burden test
+Fit_burden_Cox_aGVHD24_MDS_validation <- burdenMeta(Fit_Cox_model_aGVHD24_MDS_validation, 
+                                         SNPInfo = snpInfoV,snpNames="SNP", 
+                                         aggregateBy = aggregate_byV)
+
+# 4. Save outputs 
+write.table(Fit_Cox_skato_model_aGVHD24_MDS_validation, file = "Results_Cox_skato_aGVHD24_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_aGVHD24_MDS_validation, file = "Results_Cox_burden_aGVHD24_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_aGVHD24_MDS_validation, "Results_aGVHD24_skato_validation_MDS.rds")
+saveRDS(Fit_burden_Cox_aGVHD24_MDS_validation, "Results_aGVHD24_burden_validation_MDS.rds")
+```
+
+#### 8-c) Results of SKAT-O - aGvHD24 in recipients- validation
+
+```{r}
+
+print(Fit_Cox_skato_model_aGVHD24_MDS_validation)
+```
+
+#### 8-d) Results of Burden test - aGvHD24 in recipients- validation
+
+```{r}
+print(Fit_burden_Cox_aGVHD24_MDS_validation)
+```
+
+### ===============================
+
+### (9) Associations between mtDNA & aGvHD34 - Recipients validation
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and acute GVHD34 in recipients
+
+##### 9-a) Run the cause-specific Cox SKAT-O model for aGvHD34 in recipients to check anye NA p‑values in the single‑SNV analysis
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_aGVHD34_MDS_validation<-prepCox(genomatrixV, Surv(day_aGvHD34,event_aGvhD34) ~ age+ donorage+  prophx+ donorgp+ pc1+ pc2,SNPInfo = snpInfoV, aggregateBy = aggregate_byV, data = pheno_fileV ,snpNames="SNP",verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_aGVHD34_MDS_validation<-singlesnpMeta(Cox_model_aGVHD34_MDS_validation, SNPInfo = snpInfoV, aggregateBy = aggregate_byV,snpNames="SNP")
+
+# Print SNVs with P-value = NA
+singleSNPMeta_aGVHD34_MDS_NA_validation <- singleSNPMeta_aGVHD34_MDS_validation %>%
+  filter(is.na(p))
+
+singleSNPMeta_aGVHD34_MDS_NA_validation <- singleSNPMeta_aGVHD34_MDS_validation[is.na(singleSNPMeta_aGVHD34_MDS_validation$p), ]
+
+print(singleSNPMeta_aGVHD34_MDS_NA_validation)
+
+# Save SNV results
+write.table(singleSNPMeta_aGVHD34_MDS_validation, file = "Results_singleSNPMeta_aGvHD34_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again if there is any
+The p-values with NA = 0 
+```
+
+##### 9-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# 1. Filter SNPs: We didn't observed any NA for P-valuse in single variant analysis
+
+
+# 2. Run Cox model
+Fit_Cox_model_aGVHD34_MDS_validation <- prepCox(genomatrixV,Surv(day_aGvHD34, event_aGvhD34) ~ age + donorage+ prophx+ donorgp+ pc1+ pc2, SNPInfo = snpInfoV, 
+                                     aggregateBy = aggregate_byV, 
+                                     data = pheno_fileV, snpNames="SNP",
+                                     verbose = TRUE)
+# 3. Run Cox  Skat-o model
+Fit_Cox_skato_model_aGVHD34_MDS_validation <- skatOMeta(Fit_Cox_model_aGVHD34_MDS_validation, 
+                                         SNPInfo = snpInfoV, 
+                                         aggregateBy = aggregate_byV,snpNames="SNP", 
+                                         verbose = TRUE)
+# 4. Run Burden test 
+Fit_burden_Cox_aGVHD34_MDS_validation <- burdenMeta(Fit_Cox_model_aGVHD34_MDS_validation, 
+                                         SNPInfo = snpInfoV,snpNames="SNP", 
+                                         aggregateBy = aggregate_byV)
+
+# 5. Save outputs
+write.table(Fit_Cox_skato_model_aGVHD34_MDS_validation, file = "Results_Cox_skato_aGVHD34_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_aGVHD34_MDS_validation, file = "Results_Cox_burden_aGVHD34_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_aGVHD34_MDS_validation, "results_agvhd34_skato_MDS_validation.rds")
+saveRDS(Fit_burden_Cox_aGVHD34_MDS_validation, "results_agvhd34_burden_MDS_validation.rds")
+```
+
+#### 9-c) Results of SKAT-O - aGvHD34 in recipients- validation
+
+```{r}
+print(Fit_Cox_skato_model_aGVHD34_MDS_validation)
+```
+
+#### 9-d) Results of Burden test - aGvHD34 in recipients- validation
+
+```{r}
+print(Fit_burden_Cox_aGVHD34_MDS_validation)
+```
+
+
+### ===============================
+
+### (10) Associations between mtDNA & cGvHD - Recipients validation
+
+### ===============================
+
+### Aim: Cause-specific Cox SKAT-O to test the association between mtDNA variants and chronic GVHD in recipients
+
+##### 10-a) Run the cause-specific Cox SKAT-O model for cGvHD in recipients to check anye NA p‑values in the single‑SNV analysis
+
+```{r eval=TRUE, message=FALSE, include=TRUE, paged.print=FALSE, results='hide', warning=FALSE}
+knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
+                                         perl = '-Mstrict -Mwarnings',
+                                         bash = '-o errexit'
+))
+
+# Main cox model
+Cox_model_cGvHD_MDS_validation<-prepCox(genomatrixV, Surv(intxcgvhd,cgvhd) ~ age+ donorage+  prophx+ donorgp + pc1+ pc2, SNPInfo = snpInfoV, aggregateBy = aggregate_byV, data = pheno_fileV ,snpNames="SNP",verbose = TRUE)
+
+
+# Single SNV
+singleSNPMeta_cGvHD_MDS_validation<-singlesnpMeta(Cox_model_cGvHD_MDS_validation, SNPInfo = snpInfoV, snpNames="SNP",aggregateBy = aggregate_byV)
+
+# Print SNVs with P-value = NA
+singleSNPMeta_cGvHD_MDS_NA_validation <- singleSNPMeta_cGvHD_MDS_validation %>%
+  filter(is.na(p))
+
+singleSNPMeta_cGvHD_MDS_NA_validation <- singleSNPMeta_cGvHD_MDS_validation[is.na(singleSNPMeta_cGvHD_MDS_validation$p), ]
+
+print(singleSNPMeta_cGvHD_MDS_NA_validation)
+
+# Save SNV results
+write.table(singleSNPMeta_cGvHD_MDS_validation, file = "Results_singleSNPMeta_cGvHD_MDS__validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```         
+We need to remove the variants with NA P-values from SNPINFO file, then run the Cox SKAT-O model again if there is any
+The p-values with NA = 0 
+```
+
+##### 10-b) Run the Cox SKAT-O model again after removing variants with NA P-values
+
+```{r eval=TRUE, message=FALSE, warning=FALSE, include=TRUE, paged.print=FALSE, results='hide'}
+
+# 1. Run Cox model
+Fit_Cox_model_cGvHD_MDS_validation <- prepCox(genomatrixV, 
+                                     Surv(intxcgvhd,cgvhd) ~ age+ donorage+prophx 
+                                     + donorgp
+                                     + pc1+ pc2
+                                     ,SNPInfo = snpInfoV ,snpNames="SNP",
+                                     aggregateBy = aggregate_byV, 
+                                     data = pheno_fileV,
+                                     verbose = TRUE)
+# 2. Run Cox  Skat-o model
+Fit_Cox_skato_model_cGvHD_MDS_validation <- skatOMeta(Fit_Cox_model_cGvHD_MDS_validation, 
+                                         SNPInfo = snpInfoV , 
+                                         aggregateBy = aggregate_byV,snpNames="SNP", 
+                                         verbose = TRUE)
+
+
+# 3. Run Burden test 
+Fit_burden_Cox_cGvHD_MDS_validation <- burdenMeta(Fit_Cox_model_cGvHD_MDS_validation, 
+                                         SNPInfo = snpInfoV, snpNames="SNP" ,
+                                         aggregateBy = aggregate_byV)
+
+# 4. Save outputs
+write.table(Fit_Cox_skato_model_cGvHD_MDS_validation, file = "Results_Cox_skato_cGvHD_MDS_validation_March2026_without_only_age&drgroup_depliation.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+write.table(Fit_burden_Cox_cGvHD_MDS_validation, file = "Results_Cox_burden_cGvHD_MDS_validation_March2026.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+saveRDS(Fit_Cox_skato_model_cGvHD_MDS_validation, "results_cGvHD_skato_MDS_validation.rds")
+saveRDS(Fit_burden_Cox_cGvHD_MDS_validation, "results_cGvHD_burden_MDS_validation.rds")
+```
+
+#### 10-c) Results of SKAT-O - cGvHD in recipients- validation
+
+```{r}
+print(Fit_Cox_skato_model_cGvHD_MDS_validation)
+```
+
+#### 10-d) Results of Burden test - cGvHD in recipients- validation
+
+```{r}
+print(Fit_burden_Cox_cGvHD_MDS_validation)
+```
