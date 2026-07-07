@@ -28,11 +28,11 @@ library(gtsummary)
 library(dplyr)
 
 # Set directory
-setwd("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply")
+setwd("")
 
 ```
 
-#### 1-a) Prepare data for main analysis (*only one time*)
+#### 1-a) Prepare data for main analysis
 
 ```{r eval=TRUE, echo=TRUE, results='hide', message=FALSE, warning=FALSE}
 knitr::opts_chunk$set(engine.opts = list(echo = FALSE,
@@ -40,118 +40,10 @@ knitr::opts_chunk$set(engine.opts = list(echo = FALSE,
                                          bash = '-o errexit'
 ))
 
-# Run this if you don't have the GvHD variables based on 100 days cutoff
-"pheno_file = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_May13th_2025.xlsx')
 
 
-
-Donorgroup >=6 gets mapped to 6. All other categories stay the same.
-
-So basically, we’re collapsing the following three categories:
-
-Mis-matched unrelated (<=6/8)
-Multi-donor
-Unrelated (matching unknown)
-
-After you collapse there are only 5 observations in the donorgp=6 category. See how your Cox models hold up. If there are problems with convergence, you might consider just deleting those 5 observations (so you’d have n=489). 
-
-
-
-
-
-##### Collapse GVHD prophylaxis variable based on Paul’s suggestion
-'GVHD prophylaxis // 5/6 = (Post-cy alone, Post-cy + others) coded as 3(n=66)
-0/20/99 = (No GVHD prophylaxis, Other, Missing)and 2/3/4  = (T-cell depletion + Others, CD34 selection along, CD34 selection + others))
-5/6 = (Post-cy alone, Post-cy + others)
-7/8/9/10 = (Tac + MMF + others, Tac + MTX + others, Tac + others, Tac alone)
-11/12/13 = (CSA + MMF + others, CSA + MTX + others, CSA + others)'
-
-pheno_file$gvhprhrx_R1 <- with(pheno_file,
-                               ifelse(gvhprhrx %in% c(0, 20, 99,2,3,4), 1,
-                                             ifelse(gvhprhrx %in% c(5, 6), 2,
-                                                    ifelse(gvhprhrx %in% c(7, 8, 9, 10), 3,
-                                                           ifelse(gvhprhrx %in% c(11, 12, 13), 4, 0)))))
-
-table(pheno_file$gvhprhrx_R1)
-
-# 
-pheno_file$gvhprhrx_R1 <- with(pheno_file,
-                               ifelse(gvhprhrx %in% c(0, 20, 99,2,3,4), 1,
-                                             ifelse(gvhprhrx %in% c(5, 6), 2,
-                                                    ifelse(gvhprhrx %in% c(7, 8, 9, 10), 3,
-                                                           ifelse(gvhprhrx %in% c(11, 12, 13), 4, 0)))))
-
-
-# convert month unit to day
-pheno_file$day_aGvHD24<-pheno_file$intxagvhd24*30
-pheno_file$day_aGvHD34<-pheno_file$intxagvhd34*30
-
-# Create 100 aGvHD
-pheno_file <- pheno_file %>%
-  mutate(
-    event_aGvhD24 = ifelse(day_aGvHD24 > 100 & agvhd24 == 1, 0, agvhd24)
-  )
-pheno_file <- pheno_file %>%
-  mutate(
-    event_aGvhD34 = ifelse(day_aGvHD34 > 100 & agvhd34 == 1, 0, agvhd34)
-  )
-
-# Any GvHD
-pheno_file <- pheno_file %>%
-  mutate(
-    gvhd = ifelse(
-      event_aGvhD24 == 1 | event_aGvhD34 == 1 | cgvhd == 1,
-      1, 0
-    )
-  )
-"
-
-# 
-"pheno_file <- pheno_file %>%
-  mutate(
-    gvhd = ifelse(
-      event_aGvhD24 == 1 | event_aGvhD34 == 1 | cgvhd == 1,
-      1, 0
-    )
-  )
-
-
-pheno_file <- pheno_file %>%
-  mutate(
-    time_aGvHD24_use = ifelse(event_aGvhD24 == 1, intxagvhd24, NA),
-    time_aGvHD34_use = ifelse(event_aGvhD34 == 1, intxagvhd34, NA),
-    time_cGvHD_use   = ifelse(cgvhd == 1, intxcgvhd, NA),
-
-    time_gvhd = pmin(time_aGvHD24_use, time_aGvHD34_use, time_cGvHD_use, na.rm = TRUE)
-  )"
-
-
-# Merge 1 =  ATG alone(n=145) or Campath alone (n=6) // 2= Neither (n=343)
-'pheno_file$atgcampathgp_r <- with(pheno_file,
-                               ifelse(atgcampathgp %in% c(2, 3), 1,
-                                             ifelse(atgcampathgp == 4, 2, NA)))'
-
-
-## Keep main prophylaxis variable with new name 'prophx_r'
-'pheno_fileV$prophx_r<-(pheno_fileV$prophx)'
-
-# Collapse the prophx variable in validation dataset:Tac+/-others =0, 'CSA+/-others & others' = 1, 
-'pheno_fileV$prophx<-ifelse(pheno_fileV$prophx==3,0,ifelse(pheno_fileV$prophx==4,1,1))'
-
-# Merge the In vivo T-cell depletion categories validation data
-'pheno_fileV$atgcampathgp_r <- with(pheno_fileV,
-                               ifelse(atgcampathgp2 %in% c(2, 3), 1,
-                                             ifelse(atgcampathgp2 == 4, 2, NA)))'
-
-
-#Save data// we dont need run again as already created required data
-'write_xlsx(pheno_file, "C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx")'
-
-
-'write_xlsx(pheno_fileV, "C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS295_clinical_R4.xlsx")'
-
-
-'library(car)
+# Check Multicolinearity
+library(car)
 library(performance)
 
 vif_model <- lm(intxcgvhd ~ age+ donorage+
@@ -197,9 +89,9 @@ knitr::opts_chunk$set(engine.opts = list(echo = FALSE, warning=FALSE,
 ))
 
 # Recipient data
-pheno_file = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx')
-genomatrix = read.table("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/all494_2666_binary.vcf.txt",header=TRUE)
-snpInfo = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/SNP_POS_ALT_Func_2666_494_R2.xlsx')
+pheno_file = read_excel('MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx')
+genomatrix = read.table("all494_2666_binary.vcf.txt",header=TRUE)
+snpInfo = read_excel('SNP_POS_ALT_Func_2666_494_R2.xlsx')
 
 
 pheno_file$event_aGvhD24<-as.numeric(pheno_file$event_aGvhD24)
@@ -219,9 +111,9 @@ pheno_file$donorgp<-factor(pheno_file$donorgp)
 
 
 # Donor data
-pheno_fileD = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx')
-genomatrixD = read.table("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/all494_1825_binary.vcf.txt",header=TRUE)
-snpInfoD = read_excel('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/SNP_POS_ALT_Func_1825_494_R2.xlsx')
+pheno_fileD = read_excel('MDS_imputed_Clinical_MDS&donor_March14th_2026.xlsx')
+genomatrixD = read.table("all494_1825_binary.vcf.txt",header=TRUE)
+snpInfoD = read_excel('SNP_POS_ALT_Func_1825_494_R2.xlsx')
 
 pheno_fileD$event_aGvhD24<-as.numeric(pheno_fileD$event_aGvhD24)
 pheno_fileD$event_aGvhD34<-as.numeric(pheno_fileD$event_aGvhD34)
@@ -243,9 +135,9 @@ pheno_fileD$donorgp<-factor(pheno_fileD$donorgp)
 
 
 # Read validation dataset- NCI
-genomatrixV = read.table("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS295_2942_binary.txt",header=TRUE)
-snpInfoV = read.csv('C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/SNV_info_excluded_non-coding.csv',header=TRUE)
-pheno_fileV = read_excel("C:/Users/Sarsangjang/Desktop/GVHD Project/Results_SKAT-o_March2026_JCO_reply/MDS295_clinical_R4.xlsx")
+genomatrixV = read.table("MDS295_2942_binary.txt",header=TRUE)
+snpInfoV = read.csv('SNV_info_excluded_non-coding.csv',header=TRUE)
+pheno_fileV = read_excel("MDS295_clinical_R4.xlsx")
 
 pheno_fileV$event_aGvhD24[pheno_fileV$event_aGvhD24==98] <- NA
 pheno_fileV$event_aGvhD34[pheno_fileV$event_aGvhD34==98] <- NA
